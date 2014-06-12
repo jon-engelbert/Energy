@@ -1,5 +1,6 @@
 library(RJSONIO)
 library(RCurl)
+library(timeDate)
 
 readElectric = function(filename) {
     el = read.csv(file=filename, skip=14)
@@ -55,19 +56,20 @@ readWeather = function(starttime, endtime, cityid) {
     weather_df
 }
 
-fillScheduleInterval = function(schedule, starttime, endtime, coolSP, heatSP) {
+fillScheduleInterval = function(firsttime, schedule, starttime, endtime, coolSP, heatSP) {
     time = starttime
-    while (time < endTime) {
+    while (time < endtime) {
         scheduleRow = c(time, coolSP, heatSP)
-        schedule = rbind(schedule, scheduleRow)
-        time = starttime+ 60*60
+        i = 1+difftime(time, firsttime, units="hours") 
+        schedule[i,] = scheduleRow
+        time = time+ 60*60
     }
     schedule
 }
 
-setSchedule = function(weather, startTime, endTime) {
+setSchedule = function(weather, starttime, endtime) {
 #find the day of week for startTime
-    sleepCool = 76
+    sleepCool = 74
     sleepHeat= 64
     presentAmCool = 76
     presentAmHeat= 68
@@ -77,25 +79,31 @@ setSchedule = function(weather, startTime, endTime) {
     presentPmHeat= 66
     timeWake = 6*60*60
     timeLeave = 8*60*60
-    timeReturn = 6*60*60
-    timeSleep = 10*60*60
+    timeReturn = 18*60*60
+    timeSleep = 22*60*60
     # on weekends, only wake & sleep settings
+    N = (as.Date(nowtime)-as.Date(starttime))*24
+    schedule = data.frame(num=rep(0, N), num=rep(0, N), num=rep(0,N))
     
     # for a weekday, for each weather time slot, add heat & cool setpoints
     time= starttime
-    schedule = data.frame()
     while (time+ timeWake < endtime) {
-        fillScheduleInterval(schedule, time, time+ timeWake, sleepCool, sleepHeat)
-        fillScheduleInterval(schedule, time +timeWake, time +timeLeave, presentAmCool, presentAmHeat)
-        fillScheduleInterval(schedule, time +timeLeave, time +timeReturn, awayCool, awayHeat)
-        fillScheduleInterval(schedule, time +timeReturn, time +timeSleep, presentPmCool, presentPmHeat)
-        time = time + timeSleep
+        schedule = fillScheduleInterval(starttime, schedule, time, time + timeWake, sleepCool, sleepHeat)
+        dayOfWeek = weekdays(as.Date(time+timeWake))
+        if ((dayOfWeek != "Saturday") && (dayOfWeek != "Sunday")) {
+            schedule = fillScheduleInterval(starttime, schedule, time +timeWake, time +timeLeave, presentAmCool, presentAmHeat)
+            schedule = fillScheduleInterval(starttime, schedule, time +timeLeave, time +timeReturn, awayCool, awayHeat)
+            schedule = fillScheduleInterval(starttime, schedule, time +timeReturn, time +timeSleep, presentPmCool, presentPmHeat)
+        } else {
+            schedule = fillScheduleInterval(starttime, schedule, time +timeWake, time +timeSleep, presentAmCool, presentAmHeat)            
+        }
+        schedule = fillScheduleInterval(starttime, schedule, time +timeSleep, time+ (24*3600), sleepCool, sleepHeat)
+        time = time+ (24*3600)
     }
-    if (time < endTime) {
-        fillScheduleInterval(schedule, time, endTime, sleepCool, sleepHeat)
+    if (time < endtime) {
+        schedule = fillScheduleInterval(starttime, schedule, time, endtime, sleepCool, sleepHeat)
         
     }
-    colnames(schedule)= c('heat', 'cool')
     schedule
 }
 
@@ -134,20 +142,22 @@ if (file.exists("sample_weather.rds")){
 #add thermostat schedule
 schedule = data.frame()
 starttime = as.POSIXct("2013-09-16 0:00 EST")
-nowdate =  as.POSIXct(Sys.Date())
-while (starttime < nowdate- 60*60*24) {
-    endtime = starttime + 60*60*24
-
-    schedule_part = setSchedule(weather, starttime, endtime)
-    if (nrow(weather_part) > 0) {
-        if (is.null(schedule))
-            schedule = schedule_part
-        else
-            schedule = rbind(schedule,schedule_part)
-        starttime = endtime
-    } else
-        starttime = endtime+ 60*60
-    cbind(weather, schedule)
-}
+nowtime =  as.POSIXct(Sys.Date())
+schedule = setSchedule(weather, starttime, nowtime)
+# while (starttime < nowdate- 60*60*24) {
+#     endtime = starttime + 60*60*24
+# 
+#     schedule_part = setSchedule(schedule, weather, starttime, endtime)
+#     if (nrow(weather_part) > 0) {
+#         if (is.null(schedule))
+#             schedule = schedule_part
+#         else
+#             schedule = rbind(schedule,schedule_part)
+#         starttime = endtime
+#     } else
+#         starttime = endtime+ 60*60
+#     colnames(schedule)= c('time', 'heat', 'cool')
+#     #cbind(weather, schedule)
+# }
 
 #: http://openweathermap.org/data/2.3/forecast/city?id=524901&APPID=5582b0b32d7a81805cbce5455ccc8b46
